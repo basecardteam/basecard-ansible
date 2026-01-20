@@ -1,0 +1,19 @@
+Host github-backend
+    HostName github.com
+    User git
+    IdentityFile {{ deploy_keys_dir }}/backend_deploy_key
+
+Host github-miniapp
+    HostName github.com
+    User git
+    IdentityFile {{ deploy_keys_dir }}/miniapp_deploy_key
+
+Host github-deploy-agent
+    HostName github.com
+    User git
+    IdentityFile {{ deploy_keys_dir }}/deploy_agent_key
+
+Host github-admin-dashboard
+    HostName github.com
+    User git
+    IdentityFile {{ deploy_keys_dir }}/admin_dashboard_deploy_key

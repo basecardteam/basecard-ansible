@@ -1,0 +1,139 @@
+---
+- name: Setup BaseCard Deploy Agent
+  hosts: home_servers
+  vars_files:
+    - vars/secrets.yml
+    - vars/basecard.yml
+  vars:
+    user_name: "{{ ansible_user_id }}"
+    user_home: "{{ ansible_user_dir }}"
+    deploy_keys_dir: "{{ user_home }}/.ssh/deploy_keys"
+
+  tasks:
+    - name: Ensure .ssh directory exists
+      ansible.builtin.file:
+        path: "{{ user_home }}/.ssh"
+        state: directory
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0700"
+
+    - name: Configure .ssh/config
+      ansible.builtin.template:
+        src: ssh_config.j2
+        dest: "{{ user_home }}/.ssh/config"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0600"
+
+    - name: Install Go
+      ansible.builtin.apt:
+        name: golang-go
+        state: present
+        update_cache: true
+      become: true
+
+    - name: Ensure src directory exists
+      ansible.builtin.file:
+        path: "{{ user_home }}/src"
+        state: directory
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0755"
+
+    - name: Ensure deploy_keys directory exists
+      ansible.builtin.file:
+        path: "{{ user_home }}/.ssh/deploy_keys"
+        state: directory
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0700"
+
+    - name: Deploy deploy_agent_key
+      ansible.builtin.copy:
+        content: "{{ deploy_agent_key }}"
+        dest: "{{ user_home }}/.ssh/deploy_keys/deploy_agent_key"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0600"
+      when: deploy_agent_key is defined
+
+    - name: Clone deploy-agent repositories
+      ansible.builtin.git:
+        repo: "{{ item.url }}"
+        dest: "{{ user_home }}/src/{{ item.name }}"
+        version: main
+        accept_hostkey: true
+        key_file: "{{ user_home }}/.ssh/deploy_keys/deploy_agent_key"
+      loop: "{{ infra_repo_list }}"
+      register: cloned_repos
+
+    - name: Build deploy-agent (Go)
+      ansible.builtin.command: bash build.sh
+      args:
+        chdir: "{{ user_home }}/src/{{ item.0.name }}"
+      loop: "{{ infra_repo_list | zip(cloned_repos.results) | list }}"
+      when:
+        - item.0.app_type | default('') == 'go'
+        - item.1.changed or item.0.force_build | default(false)
+      changed_when: true
+
+    - name: Ensure binary is executable
+      ansible.builtin.file:
+        path: "{{ user_home }}/src/{{ item.0.name }}/deploy-agent"
+        mode: "0755"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+      loop: "{{ infra_repo_list | zip(cloned_repos.results) | list }}"
+      when:
+        - item.0.app_type | default('') == 'go'
+
+    - name: Deploy .env for deploy-agent
+      ansible.builtin.copy:
+        content: "{{ deploy_agent_env | default('') }}"
+        dest: "{{ user_home }}/src/{{ item.0.name }}/.env"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0600"
+      loop: "{{ infra_repo_list | zip(cloned_repos.results) | list }}"
+      when:
+        - item.0.name == 'basecard-deploy-agent'
+        - deploy_agent_env is defined
+
+    - name: Configure systemd service
+      ansible.builtin.template:
+        src: deploy-agent.service.j2
+        dest: /etc/systemd/system/deploy-agent.service
+        owner: root
+        group: root
+        mode: "0644"
+      become: true
+      loop: "{{ infra_repo_list | zip(cloned_repos.results) | list }}"
+      when:
+        - item.0.deploy_method | default('') == 'systemd'
+        - item.1.changed or item.0.force_build | default(false)
+      register: service_config
+
+    - name: Reload systemd and start deploy-agent (Binary)
+      ansible.builtin.systemd:
+        name: deploy-agent
+        state: restarted
+        daemon_reload: true
+        enabled: true
+      become: true
+      loop: "{{ infra_repo_list | zip(cloned_repos.results) | list }}"
+      when:
+        - item.0.deploy_method | default('') == 'systemd'
+        - item.1.changed or service_config.results[ansible_loop_idx].changed | default(false) or item.0.force_build | default(false)
+      loop_control:
+        index_var: ansible_loop_idx
+
+    - name: Start Docker Compose (Container)
+      ansible.builtin.command: "docker compose -f {{ item.0.docker_compose_file }} up -d"
+      args:
+        chdir: "{{ user_home }}/src/{{ item.0.name }}"
+      loop: "{{ infra_repo_list | zip(cloned_repos.results) | list }}"
+      when:
+        - item.0.deploy_method | default('') == 'docker'
+        - item.1.changed or item.0.force_build | default(false)
+      changed_when: true

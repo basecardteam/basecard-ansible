@@ -1,0 +1,22 @@
+[Unit]
+Description=Deploy Agent - Webhook service for container management
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User={{ user_name }}
+Group={{ user_name }}
+WorkingDirectory={{ user_home }}/src/basecard-deploy-agent
+EnvironmentFile={{ user_home }}/src/basecard-deploy-agent/.env
+ExecStart={{ user_home }}/src/basecard-deploy-agent/deploy-agent
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=deploy-agent
+
+[Install]
+WantedBy=multi-user.target

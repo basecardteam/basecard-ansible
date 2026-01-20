@@ -1,0 +1,57 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+!terraform.tfvars.example
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+
+# Sensitive files
+terraform.tfvars
+*.pem
+*.key
+secrets/
+ansible/vars/secrets.yml
+ansible/group_vars/all/vault.yml
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Backup files
+*.bak
+*.backup
+
+# Vault
+.vault_pass.txt
+
+# Ansible
+# Ignore Ansible temporary files
+.ansible
+facts_cache
+*.retry
+secret_files/
+
+# Personal
+TODO
+.env
+
+# Migration backups (sensitive validator keys)
+ansible/.migration/
+archive/

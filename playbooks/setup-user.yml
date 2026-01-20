@@ -1,0 +1,105 @@
+---
+- name: Setup BaseCard User and SSH Config
+  hosts: home_servers
+  become: true
+  vars_files:
+    - vars/secrets.yml
+  vars:
+    user_name: basecard
+    user_home: /home/basecard
+    deploy_keys_dir: "{{ user_home }}/.ssh/deploy_keys"
+
+  tasks:
+    - name: Ensure group "basecard" exists
+      ansible.builtin.group:
+        name: "{{ user_name }}"
+        state: present
+
+    - name: Ensure user "basecard" exists
+      ansible.builtin.user:
+        name: "{{ user_name }}"
+        group: "{{ user_name }}"
+        groups: docker
+        append: true
+        shell: /bin/bash
+        home: "{{ user_home }}"
+        create_home: true
+        state: present
+        # UID is intentionally left to be auto-assigned or 1011 if preferred, but user said auto is fine.
+        # However, to match the group, let's try to keep it 1011 if possible, but won't force it if taken.
+        # Allowing auto-assignment as per user comment.
+
+    - name: Ensure .ssh directory exists
+      ansible.builtin.file:
+        path: "{{ user_home }}/.ssh"
+        state: directory
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0700"
+
+    - name: Copy authorized_keys
+      ansible.builtin.copy:
+        src: files/authorized_keys
+        dest: "{{ user_home }}/.ssh/authorized_keys"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0600"
+
+    - name: Ensure deploy_keys directory exists
+      ansible.builtin.file:
+        path: "{{ deploy_keys_dir }}"
+        state: directory
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0700"
+
+    - name: Deploy backend_deploy_key
+      ansible.builtin.copy:
+        content: "{{ backend_deploy_key }}"
+        dest: "{{ deploy_keys_dir }}/backend_deploy_key"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0600"
+      when: backend_deploy_key is defined
+
+    - name: Deploy miniapp_deploy_key
+      ansible.builtin.copy:
+        content: "{{ miniapp_deploy_key }}"
+        dest: "{{ deploy_keys_dir }}/miniapp_deploy_key"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0600"
+      when: miniapp_deploy_key is defined
+
+    - name: Deploy deploy_agent_key
+      ansible.builtin.copy:
+        content: "{{ deploy_agent_key }}"
+        dest: "{{ deploy_keys_dir }}/deploy_agent_key"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0600"
+      when: deploy_agent_key is defined
+
+    - name: Deploy admin_dashboard_deploy_key
+      ansible.builtin.copy:
+        content: "{{ admin_dashboard_deploy_key }}"
+        dest: "{{ deploy_keys_dir }}/admin_dashboard_deploy_key"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0600"
+      when: admin_dashboard_deploy_key is defined
+
+    - name: Configure .ssh/config
+      ansible.builtin.template:
+        src: ssh_config.j2
+        dest: "{{ user_home }}/.ssh/config"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0600"
+
+    - name: Remove user from sudo group (if present)
+      ansible.builtin.command: gpasswd -d {{ user_name }} sudo
+      register: remove_sudo
+      failed_when: remove_sudo.rc != 0 and 'is not a member of' not in remove_sudo.stderr
+      changed_when: "'is not a member of' not in remove_sudo.stderr"
+      # For RedHat based (wheel), maybe optional, but user said "back-end api setup home server" probably ubuntu.

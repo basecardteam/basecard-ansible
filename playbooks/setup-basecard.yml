@@ -1,0 +1,180 @@
+---
+- name: Setup BaseCard Environment and Repositories
+  hosts: basecard_api
+  remote_user: basecard
+  vars_files:
+    - vars/secrets.yml
+    - vars/basecard.yml
+  vars:
+    user_name: basecard
+    user_home: /home/basecard
+
+  tasks:
+    - name: Configure custom PS1 in .bashrc
+      ansible.builtin.blockinfile:
+        path: "{{ user_home }}/.bashrc"
+        marker: "# {mark} ANSIBLE MANAGED PS1 BLOCK"
+        block: |
+          export PS1="\[\033[01;32m\]{{ inventory_hostname }}\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ "
+
+    - name: Ensure src directory exists
+      ansible.builtin.file:
+        path: "{{ user_home }}/src"
+        state: directory
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0755"
+    - name: Docker login to GHCR
+      community.docker.docker_login:
+        registry_url: "{{ docker_registry }}"
+        username: "{{ docker_user }}"
+        password: "{{ docker_token }}"
+        reauthorize: true
+      when: docker_token is defined
+
+    - name: Deploy .env.prod for backend
+      ansible.builtin.copy:
+        content: "{{ backend_env_prod }}"
+        dest: "{{ user_home }}/src/basecard-backend/.env.prod"
+        owner: "{{ user_name }}"
+        group: "{{ user_name }}"
+        mode: "0600"
+      when: backend_env_prod is defined
+
+    - name: Clone repositories for basecard
+      ansible.builtin.git:
+        repo: "{{ item.url }}"
+        dest: "{{ user_home }}/src/{{ item.name }}"
+        version: main
+        accept_hostkey: true
+        key_file: "{{ item.key_file | default(omit) }}"
+        update: "{{ item.git_update | default(true) }}"
+      loop: "{{ app_repo_list }}"
+      register: cloned_repos
+
+    - name: Install unzip (check if present)
+      ansible.builtin.command: which unzip
+      register: unzip_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Fail if unzip is missing
+      ansible.builtin.fail:
+        msg: "unzip command is required for Bun installation but missing. Please install it manually as root."
+      when: unzip_check.rc != 0
+
+    - name: Check if Bun is installed
+      ansible.builtin.stat:
+        path: "{{ user_home }}/.bun/bin/bun"
+      register: bun_bin
+
+    - name: Download Bun install script
+      ansible.builtin.get_url:
+        url: https://bun.sh/install
+        dest: /tmp/install-bun.sh
+        mode: "0755"
+      when: not bun_bin.stat.exists
+
+    - name: Install Bun
+      ansible.builtin.command: bash /tmp/install-bun.sh
+      args:
+        creates: "{{ user_home }}/.bun/bin/bun"
+      when: not bun_bin.stat.exists
+      # Use command instead of shell since it's a simple execution
+
+    - name: Add Bun to PATH in .bashrc
+      ansible.builtin.blockinfile:
+        path: "{{ user_home }}/.bashrc"
+        marker: "# {mark} ANSIBLE MANAGED BUN PATH"
+        block: |
+          export BUN_INSTALL="$HOME/.bun"
+          export PATH="$BUN_INSTALL/bin:$PATH"
+
+    - name: Ensure Bun is available as 'node' (symlink)
+      ansible.builtin.file:
+        src: "{{ user_home }}/.bun/bin/bun"
+        dest: "{{ user_home }}/.bun/bin/node"
+        state: link
+
+    - name: Install pm2
+      ansible.builtin.command: "{{ user_home }}/.bun/bin/bun install -g pm2"
+      args:
+        creates: "{{ user_home }}/.bun/bin/pm2"
+
+    - name: Install application dependencies (Bun)
+      ansible.builtin.command: "{{ user_home }}/.bun/bin/bun install --frozen-lockfile"
+      args:
+        chdir: "{{ user_home }}/src/{{ item.name }}"
+      environment:
+        PATH: "{{ user_home }}/.bun/bin:{{ ansible_env.PATH }}"
+      loop: "{{ app_repo_list }}"
+
+      when:
+        - item.app_type | default('') == 'bun'
+        - (cloned_repos.results[idx].changed or item.force_build | default(false))
+      loop_control:
+        index_var: idx
+      changed_when: true
+
+    - name: Build applications (Bun)
+      ansible.builtin.shell: "{{ user_home }}/.bun/bin/bun run build"
+      args:
+        chdir: "{{ user_home }}/src/{{ item.name }}"
+        executable: /bin/bash
+      environment:
+        PATH: "{{ user_home }}/.bun/bin:{{ ansible_env.PATH }}"
+        SHELL: /bin/bash
+      loop: "{{ app_repo_list }}"
+
+      when:
+        - item.app_type | default('') == 'bun'
+        - (cloned_repos.results[idx].changed or item.force_build | default(false))
+      loop_control:
+        index_var: idx
+      changed_when: true
+
+    - name: Manage PM2 applications
+      ansible.builtin.command: "{{ user_home }}/.bun/bin/pm2 reload {{ item.pm2_config }} --update-env"
+      args:
+        chdir: "{{ user_home }}/src/{{ item.name }}"
+      environment:
+        PATH: "{{ user_home }}/.bun/bin:{{ ansible_env.PATH }}"
+      loop: "{{ app_repo_list }}"
+
+      when:
+        - item.deploy_method | default('') == 'pm2'
+        - (cloned_repos.results[idx].changed or item.force_build | default(false))
+      loop_control:
+        index_var: idx
+      register: pm2_reload
+      ignore_errors: true
+      changed_when: true
+
+    - name: Fallback start PM2 applications
+      ansible.builtin.command: "{{ user_home }}/.bun/bin/pm2 start {{ item.pm2_config }}"
+      args:
+        chdir: "{{ user_home }}/src/{{ item.name }}"
+      environment:
+        PATH: "{{ user_home }}/.bun/bin:{{ ansible_env.PATH }}"
+      loop: "{{ app_repo_list }}"
+
+      when:
+        - item.deploy_method | default('') == 'pm2'
+        - (cloned_repos.results[idx].changed or item.force_build | default(false))
+        - (pm2_reload.results[idx] is failed)
+      loop_control:
+        index_var: idx
+      changed_when: true
+
+    - name: Start Docker Compose applications
+      ansible.builtin.command: "docker compose -f {{ item.docker_compose_file }} up -d"
+      args:
+        chdir: "{{ user_home }}/src/{{ item.name }}"
+      loop: "{{ app_repo_list }}"
+
+      when:
+        - item.deploy_method | default('') == 'docker'
+        - (cloned_repos.results[idx].changed or item.force_build | default(false))
+      loop_control:
+        index_var: idx
+      changed_when: true

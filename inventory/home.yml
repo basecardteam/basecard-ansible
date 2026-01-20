@@ -1,0 +1,12 @@
+all:
+  vars:
+    cloud_provider: home
+  children:
+    home_servers:
+      hosts:
+        # p-home-seoul-server-root:
+        p-home-bucheon-server-root:
+    basecard_api:
+      hosts:
+        # p-home-seoul-api-basecard-backend:
+        p-home-bucheon-api-basecard-backend:

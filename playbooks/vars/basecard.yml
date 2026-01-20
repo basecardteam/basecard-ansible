@@ -1,0 +1,35 @@
+docker_registry: ghcr.io
+docker_user: jeongseup
+
+app_repo_list:
+  - name: basecard-admin-dashboard
+    url: git@github-admin-dashboard:basecardteam/basecard-admin-dashboard.git
+    deploy_method: pm2
+    app_type: bun
+    pm2_config: ecosystem.config.cjs
+
+  - name: basecard-backend
+    url: git@github-backend:basecardteam/basecard-backend.git
+    git_update: true
+    deploy_method: docker
+    docker_compose_file: docker-compose.prod.yml
+    force_build: true
+
+  - name: basecard-miniapp
+    url: git@github-miniapp:basecardteam/basecard-miniapp.git
+    git_update: true
+    deploy_method: pm2
+    app_type: bun
+    pm2_config: ecosystem.config.cjs
+    force_build: false
+
+infra_repo_list:
+  - name: basecard-deploy-agent
+    url: git@github-deploy-agent:basecardteam/basecard-deploy-agent.git
+    app_type: go
+    deploy_method: systemd
+
+  - name: basecard-deploy-agent-docker
+    url: git@github-deploy-agent:basecardteam/basecard-deploy-agent.git
+    deploy_method: docker
+    docker_compose_file: docker-compose.yml
