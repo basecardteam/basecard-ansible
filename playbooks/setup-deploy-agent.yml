@@ -18,6 +18,21 @@
         group: "{{ user_name }}"
         mode: "0700"
 
+    - name: Docker login to GHCR (Host User)
+      community.docker.docker_login:
+        registry_url: ghcr.io
+        username: "{{ docker_user }}"
+        password: "{{ docker_token }}"
+      when: docker_token is defined
+
+    - name: Docker login to GHCR (Root)
+      community.docker.docker_login:
+        registry_url: ghcr.io
+        username: "{{ docker_user }}"
+        password: "{{ docker_token }}"
+      become: true
+      when: docker_token is defined
+
     - name: Configure .ssh/config
       ansible.builtin.template:
         src: ssh_config.j2
@@ -103,20 +118,35 @@
     - name: Configure systemd service
       ansible.builtin.template:
         src: deploy-agent.service.j2
-        dest: /etc/systemd/system/deploy-agent.service
+        dest: "/etc/systemd/system/{{ item.0.service_name | default(item.0.name) }}.service"
         owner: root
         group: root
         mode: "0644"
       become: true
+      vars:
+        app_name: "{{ item.0.name }}"
+        app_binary: "{{ item.0.app_binary | default('deploy-agent') }}"
       loop: "{{ infra_repo_list | zip(cloned_repos.results) | list }}"
       when:
         - item.0.deploy_method | default('') == 'systemd'
-        - item.1.changed or item.0.force_build | default(false)
       register: service_config
+
+    # - name: Deploy management script (cmd.sh)
+    #   ansible.builtin.template:
+    #     src: cmd.sh.j2
+    #     dest: "{{ user_home }}/src/{{ item.0.name }}/cmd.sh"
+    #     owner: "{{ user_name }}"
+    #     group: "{{ user_name }}"
+    #     mode: "0755"
+    #   vars:
+    #     service_name: "{{ item.0.service_name | default(item.0.name) }}"
+    #   loop: "{{ infra_repo_list | zip(cloned_repos.results) | list }}"
+    #   when:
+    #     - item.0.deploy_method | default('') == 'systemd'
 
     - name: Reload systemd and start deploy-agent (Binary)
       ansible.builtin.systemd:
-        name: deploy-agent
+        name: "{{ item.0.service_name | default(item.0.name) }}"
         state: restarted
         daemon_reload: true
         enabled: true

@@ -5,11 +5,11 @@ Requires=docker.service
 
 [Service]
 Type=simple
-User={{ user_name }}
-Group={{ user_name }}
-WorkingDirectory={{ user_home }}/src/basecard-deploy-agent
-EnvironmentFile={{ user_home }}/src/basecard-deploy-agent/.env
-ExecStart={{ user_home }}/src/basecard-deploy-agent/deploy-agent
+User=root
+Group=basecard
+WorkingDirectory={{ user_home }}/src/{{ app_name }}
+EnvironmentFile={{ user_home }}/src/{{ app_name }}/.env
+ExecStart={{ user_home }}/src/{{ app_name }}/{{ app_binary | default('deploy-agent') }}
 Restart=always
 RestartSec=5
 

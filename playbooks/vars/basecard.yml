@@ -28,6 +28,7 @@ infra_repo_list:
     url: git@github-deploy-agent:basecardteam/basecard-deploy-agent.git
     app_type: go
     deploy_method: systemd
+    service_name: basecard-deploy-agent
 
   - name: basecard-deploy-agent-docker
     url: git@github-deploy-agent:basecardteam/basecard-deploy-agent.git
